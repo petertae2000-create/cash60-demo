@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a202c">
+  <title>XGIS CASH60 진단 (로컬 온디바이스)</title>
+  <!-- build v2.4.3 (2026-09-25): GM v2.4.2 기반, DA 보정 — 판정 규칙 정합, 고정 문구 제거, HOLD 시 이전 결과 초기화, 형식 오류 HOLD, 오프라인 라이브러리 캐시 -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icon-192.png">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --danger: #ef4444;
+      --danger-bg: #450a0a;
+      --warning: #f59e0b;
+      --success: #10b981;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+    body { background: var(--bg); color: var(--text-main); padding: 16px; padding-bottom: 80px; }
+    header { margin-bottom: 20px; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    h1 { font-size: 1.25rem; font-weight: 700; color: #60a5fa; }
+    .badge { font-size: 0.75rem; padding: 4px 8px; border-radius: 9999px; background: #1e3a8a; color: #bfdbfe; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    .card-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; padding: 12px; border-radius: 8px; font-weight: 600; font-size: 0.95rem; cursor: pointer; border: none; transition: 0.2s; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:active { background: #2563eb; }
+    .btn-outline { background: transparent; border: 1px solid var(--card-border); color: var(--text-main); margin-top: 8px; }
+    input[type="file"] { display: none; }
+    .status-box { padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; margin-top: 10px; display: none; }
+    .status-hold { background: #78350f; color: #fde68a; border: 1px solid #b45309; }
+    .status-pass { background: #064e3b; color: #a7f3d0; border: 1px solid #059669; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .stat-item { background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155; }
+    .stat-label { font-size: 0.75rem; color: var(--text-sub); }
+    .stat-val { font-size: 1.1rem; font-weight: 700; margin-top: 4px; }
+    .table-container { overflow-x: auto; margin-top: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: right; }
+    th, td { padding: 8px 6px; border-bottom: 1px solid var(--card-border); }
+    th { background: #0f172a; color: var(--text-sub); font-weight: 500; text-align: center; }
+    td:first-child { text-align: center; font-weight: 600; }
+    .text-danger { color: var(--danger); font-weight: 700; }
+    .ai-output { font-size: 0.875rem; line-height: 1.6; white-space: pre-wrap; background: #0f172a; padding: 12px; border-radius: 8px; border: 1px solid #334155; margin-top: 10px; color: #e2e8f0; }
+    .progress-bar { width: 100%; height: 6px; background: #334155; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; }
+    .progress-inner { height: 100%; width: 0%; background: #3b82f6; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>XGIS CASH60</h1>
+      <p style="font-size: 0.75rem; color: var(--text-sub);">온디바이스 로컬 진단 v0.1</p>
+    </div>
+    <span class="badge" id="netStatus">온라인</span>
+  </header>
+
+  <!-- 1. 파일 입력 카드 -->
+  <div class="card">
+    <div class="card-title">
+      <span>재무 데이터 입력 (엑셀)</span>
+      <span style="font-size:0.75rem; color:var(--text-sub);">클라이언트 파싱</span>
+    </div>
+    <label class="btn btn-primary" for="fileInput">
+      📂 CASH60 엑셀 선택 (.xlsx)
+    </label>
+    <input type="file" id="fileInput" accept=".xlsx, .xls">
+    <div id="fileInfo" style="font-size:0.8rem; color:var(--text-sub); margin-top:8px; text-align:center;">
+      선택된 파일 없음
+    </div>
+    <div id="qualityBox" class="status-box"></div>
+  </div>
+
+  <!-- 2. 규칙 계산 및 위험 판정 결과 카드 -->
+  <div class="card" id="resultCard" style="display:none;">
+    <div class="card-title">
+      <span>CASH60 규칙 엔진 판정</span>
+      <span id="evalBadge" class="badge" style="background:#dc2626; color:white;">Critical 후보</span>
+    </div>
+    
+    <div class="grid-2">
+      <div class="stat-item">
+        <div class="stat-label">CASH60-001 (최소현금)</div>
+        <div class="stat-val text-danger" id="cash60_001_val">-</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">CASH60-002 (연속유출)</div>
+        <div class="stat-val text-danger" id="cash60_002_val">-</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">최초 하회 주차</div>
+        <div class="stat-val" id="firstDipWeek">-</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">60일 최저 누적잔액</div>
+        <div class="stat-val" id="minBalanceVal">-</div>
+      </div>
+    </div>
+
+    <!-- 9개 주차 자금 전망 테이블 -->
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>주차</th>
+            <th>수금 예정</th>
+            <th>지급 예정</th>
+            <th>기말 잔액</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody id="forecastTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 3. WebLLM 온디바이스 AI 리포트 카드 -->
+  <div class="card">
+    <div class="card-title">
+      <span>온디바이스 AI 브리핑 (WebLLM)</span>
+      <span style="font-size:0.75rem; color:#a5b4fc;">외부 전송 없음</span>
+    </div>
+    <p style="font-size:0.8rem; color:var(--text-sub);">
+      Qwen2.5-1.5B 모델이 기기 내부에서 동작합니다. 최초 1회 다운로드 후 비행기 모드에서도 작동합니다.
+    </p>
+    <div class="progress-bar" id="modelProgress"><div class="progress-inner" id="modelProgressBar"></div></div>
+    <button class="btn btn-outline" id="loadModelBtn" onclick="initWebLLM()">
+      ⚡ AI 엔진 준비 (최초 다운로드)
+    </button>
+    <button class="btn btn-primary" id="generateAiBtn" style="margin-top:8px; display:none;" onclick="generateAiReport()">
+      📝 AI 종합 진단 실행
+    </button>
+    <div class="ai-output" id="aiOutputText">규칙 판정 후 AI 브리핑을 생성할 수 있습니다.</div>
+  </div>
+
+  <script type="module">
+    // Service Worker 등록
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(console.error);
+      });
+    }
+
+    // 온라인/오프라인 감지
+    function updateNetStatus() {
+      const b = document.getElementById('netStatus');
+      if (navigator.onLine) {
+        b.innerText = '온라인';
+        b.style.background = '#1e3a8a';
+        b.style.color = '#bfdbfe';
+      } else {
+        b.innerText = '비행기 모드 (오프라인)';
+        b.style.background = '#065f46';
+        b.style.color = '#a7f3d0';
+      }
+    }
+    window.addEventListener('online', updateNetStatus);
+    window.addEventListener('offline', updateNetStatus);
+    updateNetStatus();
+
+    // 엑셀 계산 엔진 (자체 계산: T3 대응)
+    let calculatedData = null;
+
+    document.getElementById('fileInput').addEventListener('change', handleFile);
+
+    function handleFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      document.getElementById('fileInfo').innerText = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+        runCash60Audit(workbook);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function parseSheet(ws) {
+      if (!ws) return [];
+      return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
+    }
+
+    // v2.4.3: 날짜·금액 해석 공통 함수 (UTC 자정 기준, 형식 오류는 null/NaN)
+    const DAY = 86400000;
+    function toDate(v) {
+      if (v === null || v === undefined || v === '') return null;
+      const s = String(v).trim();
+      const m = s.match(/^(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
+      if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+      if (/^\d{5}$/.test(s)) return new Date(Date.UTC(1899, 11, 30) + Number(s) * DAY);
+      return null;
+    }
+    function toAmt(v) {
+      if (v === null || v === undefined || v === '') return NaN;
+      let s = String(v).replace(/[,\s원]/g, '');
+      if (s === '-') return 0;
+      const neg = /^\(.*\)$/.test(s);
+      const n = Number(s.replace(/[()]/g, ''));
+      return neg ? -n : n;
+    }
+    function fmtD(d) { return d.toISOString().slice(0, 10); }
+    function eok(n) { return (n / 100000000).toFixed(2) + '억 원'; }
+    function isBlankRow(r) { return !r || r.every(c => c === null || c === undefined || String(c).trim() === ''); }
+    function holdBox(msg) {
+      const qBox = document.getElementById('qualityBox');
+      qBox.className = 'status-box status-hold';
+      qBox.innerHTML = '<strong>[데이터 품질: HOLD (보류)]</strong><br>' + msg;
+      document.getElementById('resultCard').style.display = 'none';
+      document.getElementById('generateAiBtn').style.display = 'none';
+      calculatedData = null;
+    }
+
+    function runCash60Audit(wb) {
+      const qBox = document.getElementById('qualityBox');
+      const rCard = document.getElementById('resultCard');
+      qBox.style.display = 'block';
+
+      // 1. 기준정보 시트 파싱
+      const infoRows = parseSheet(wb.Sheets['기준정보']);
+      let baseDate = null;
+      let minCash = NaN;
+      let initialCash = 0;
+
+      for (let r of infoRows) {
+        if (!r[0]) continue;
+        const item = String(r[0]).trim();
+        if (item.includes('기준일')) baseDate = toDate(r[1]);
+        if (item.includes('최소 현금')) minCash = toAmt(r[1]);
+        if (item.includes('기초 현금')) initialCash = Number(String(r[1]).replace(/[^0-9.-]+/g, "")) || 0;
+      }
+
+      // T1 점검: 기준일 누락 여부
+      if (!baseDate || isNaN(baseDate.getTime())) {
+        holdBox('기준정보 시트에 기준일이 누락되었거나 날짜 형식이 아닙니다. 경보 산출이 중단됩니다.');
+        return;
+      }
+      if (isNaN(minCash) || minCash <= 0) {
+        holdBox('기준정보 시트의 최소 현금 기준이 없거나 숫자가 아닙니다. CFO 확인 후 입력해 주십시오.');
+        return;
+      }
+      let invalidRows = [];
+
+      // 현금잔액 시트 파싱 (기초 현금 직접 계산)
+      const cashRows = parseSheet(wb.Sheets['현금잔액']);
+      let calculatedInitialCash = 0;
+      for (let i = 1; i < cashRows.length; i++) {
+        const row = cashRows[i];
+        if (row && row[2]) {
+          const val = Number(String(row[2]).replace(/[^0-9.-]+/g, "")) || 0;
+          calculatedInitialCash += val;
+        }
+      }
+      if (calculatedInitialCash > 0) initialCash = calculatedInitialCash;
+
+      // 2. 지급예정 시트 파싱 & T2 점검: 중복 점검
+      const payRows = parseSheet(wb.Sheets['지급예정']);
+      let payList = [];
+      let paySet = new Set();
+      let hasDuplicatePay = false;
+
+      for (let i = 1; i < payRows.length; i++) {
+        const r = payRows[i];
+        if (isBlankRow(r)) continue;
+        const pDate = toDate(r[2]);
+        const pAmt = toAmt(r[3]);
+        if (!pDate || isNaN(pAmt)) { invalidRows.push('지급예정 ' + (i + 1) + '행'); continue; }
+        const key = `${r[0]}_${r[1]}_${fmtD(pDate)}_${pAmt}`;
+        if (paySet.has(key)) {
+          hasDuplicatePay = true;
+        }
+        paySet.add(key);
+        payList.push({ type: r[0], vendor: r[1], date: pDate, amount: pAmt, flex: r[4] });
+      }
+
+      if (hasDuplicatePay) {
+        holdBox('지급예정에 중복 의심 항목이 발견되었습니다. 확인 후 재입력 바랍니다.');
+        return;
+      }
+
+      // 3. 수금예정 시트 파싱 (연체 채권 제외 직접 계산)
+      const collRows = parseSheet(wb.Sheets['수금예정']);
+      let collList = [];
+      let overdueSum = 0;
+
+      for (let i = 1; i < collRows.length; i++) {
+        const r = collRows[i];
+        if (isBlankRow(r)) continue;
+        const cDate = toDate(r[2]);
+        const cAmt = toAmt(r[3]);
+        if (!cDate || isNaN(cAmt)) { invalidRows.push('수금예정 ' + (i + 1) + '행'); continue; }
+        const status = r[4] ? String(r[4]).trim() : '';
+        if (!status.includes('미수')) continue; // 수금 완료 등은 유입 전망에서 제외 (템플릿 기준과 동일)
+
+        // 기준일 이전 약정일이면서 미수인 경우 연체 분류
+        if (cDate < baseDate) {
+          overdueSum += cAmt;
+        } else {
+          collList.push({ vendor: r[0], date: cDate, amount: cAmt });
+        }
+      }
+
+      if (invalidRows.length > 0) {
+        holdBox('날짜 또는 금액을 해석할 수 없는 행이 있습니다: ' + invalidRows.slice(0, 5).join(', ') +
+          (invalidRows.length > 5 ? ' 외 ' + (invalidRows.length - 5) + '건' : '') + '. 형식 확인 후 재입력 바랍니다.');
+        return;
+      }
+
+      // 4. 직접 9개 주차 자금 계산 (T3: 계산시트 없이 자체 수식 처리)
+      qBox.className = 'status-box status-pass';
+      qBox.innerHTML = `<strong>[데이터 품질: PASS]</strong> 기준일(${baseDate.toISOString().slice(0,10)}) 정상, 연체채권 ${(overdueSum/100000000).toFixed(2)}억 원 유입 제외.`;
+
+      let weeks = [];
+      let curBalance = initialCash;
+      let consecutiveOutflow = 0;
+      let maxConsecutiveOutflow = 0;
+      let firstDipWeek = null;
+      let minBalance = curBalance;
+
+      // 9주차 일정 생성
+      for (let w = 1; w <= 9; w++) {
+        let wStart = new Date(baseDate.getTime() + (w - 1) * 7 * DAY);
+        let wEnd = new Date(wStart.getTime() + 6 * DAY);
+        if (w === 9) {
+          // 마지막 주차는 기준일부터 60일째(기준일+59일)까지
+          wEnd = new Date(baseDate.getTime() + 59 * DAY);
+        }
+
+        // 해당 주차 수금 및 지급 집계
+        let inAmt = 0;
+        for (let c of collList) {
+          if (c.date >= wStart && c.date <= wEnd) inAmt += c.amount;
+        }
+        let outAmt = 0;
+        for (let p of payList) {
+          if (p.date >= wStart && p.date <= wEnd) outAmt += p.amount;
+        }
+
+        let net = inAmt - outAmt;
+        curBalance += net;
+
+        if (net < 0) {
+          consecutiveOutflow += 1;
+          if (consecutiveOutflow > maxConsecutiveOutflow) maxConsecutiveOutflow = consecutiveOutflow;
+        } else {
+          consecutiveOutflow = 0;
+        }
+
+        let dip = curBalance < minCash;
+        if (dip && firstDipWeek === null) {
+          firstDipWeek = w;
+        }
+        if (curBalance < minBalance) {
+          minBalance = curBalance;
+        }
+
+        weeks.push({
+          week: w,
+          start: wStart,
+          end: wEnd,
+          inAmt,
+          outAmt,
+          net,
+          balance: curBalance,
+          dip,
+          consecutiveOutflow
+        });
+      }
+
+      // v2.4.3: Rule Pack 정의(0400) 및 DA 템플릿과 동일한 판정
+      const in30 = weeks.slice(0, 4).reduce((a, w) => a + w.inAmt, 0);
+      const out30 = weeks.slice(0, 4).reduce((a, w) => a + w.outAmt, 0);
+      const r001 = firstDipWeek ? 'Critical 후보' : ((out30 > in30 && overdueSum > 0) ? 'High 후보' : '해당 없음');
+      const r002 = maxConsecutiveOutflow >= 2 ? (firstDipWeek ? 'Critical 후보' : 'High 후보') : '해당 없음';
+      let runs = [], cur = [];
+      weeks.forEach(w => { if (w.net < 0) cur.push(w.week); else { if (cur.length >= 2) runs.push(cur); cur = []; } });
+      if (cur.length >= 2) runs.push(cur);
+      const runsText = runs.length ? runs.map(r => r.join('·') + '주차').join(', ') : '없음';
+      const minWeek = weeks.reduce((a, w) => (w.balance < a.balance ? w : a), weeks[0]).week;
+      const dipBalance = firstDipWeek ? weeks[firstDipWeek - 1].balance : null;
+      const horizonEnd = new Date(baseDate.getTime() + 59 * DAY);
+      const flexPays = payList.filter(p => String(p.flex || '').includes('협의') && p.date >= baseDate && p.date <= horizonEnd)
+        .sort((a, b) => b.amount - a.amount);
+
+      calculatedData = {
+        baseDate, minCash, initialCash, overdueSum, weeks,
+        firstDipWeek, minBalance, maxConsecutiveOutflow,
+        in30, out30, r001, r002, runsText, minWeek, dipBalance, flexPays
+      };
+
+      // 화면 표시
+      document.getElementById('cash60_001_val').innerText = r001;
+      document.getElementById('cash60_002_val').innerText = r002;
+      document.getElementById('firstDipWeek').innerText = firstDipWeek ? `${firstDipWeek}주차` : '없음';
+      document.getElementById('minBalanceVal').innerText = (minBalance / 100000000).toFixed(2) + '억 원';
+
+      const tbody = document.getElementById('forecastTableBody');
+      tbody.innerHTML = '';
+      weeks.forEach(w => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${w.week}주차</td>
+          <td>${(w.inAmt / 10000000).toFixed(0)}천만</td>
+          <td>${(w.outAmt / 10000000).toFixed(0)}천만</td>
+          <td class="${w.dip ? 'text-danger' : ''}">${(w.balance / 100000000).toFixed(2)}억</td>
+          <td class="${w.dip ? 'text-danger' : ''}">${w.dip ? '하회' : '-'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      rCard.style.display = 'block';
+      document.getElementById('generateAiBtn').style.display = 'inline-flex';
+    }
+
+    // v2.4.3: 입력 자료에서 계산된 값만으로 리포트 구성 (고정 문구 제거)
+    function ruleReport(d) {
+      const lines = [];
+      lines.push('• 기준일: ' + fmtD(d.baseDate) + ' / 기초 현금: ' + eok(d.initialCash) + ' / 최소 현금 기준: ' + eok(d.minCash));
+      lines.push('• CASH60-001: ' + d.r001 + (d.firstDipWeek ? ' (' + d.firstDipWeek + '주차 최소현금 하회: ' + eok(d.dipBalance) + ')' : ''));
+      lines.push('• CASH60-002: ' + d.r002 + ' (연속 순유출 구간: ' + d.runsText + ')');
+      lines.push('• 60일 최저 잔액: ' + d.minWeek + '주차 ' + eok(d.minBalance));
+      lines.push('• 연체 채권(유입 전망 제외): ' + eok(d.overdueSum));
+      const opts = [];
+      if (d.overdueSum > 0) opts.push('연체 채권 ' + eok(d.overdueSum) + ' 회수 협의');
+      if (d.flexPays.length) { const p = d.flexPays[0]; opts.push('조정 협의 가능 지급: ' + (p.type || '') + ' ' + fmtD(p.date) + ' ' + eok(p.amount)); }
+      lines.push('• 검토 선택지: ' + (opts.length ? opts.join(' / ') : '입력 자료상 조정 가능 항목 없음'));
+      lines.push('※ 합의 전 임계값 기준의 위험 후보이며 예측이 아님');
+      return lines.join('\n');
+    }
+
+    // WebLLM 연동
+    let engine = null;
+    const MODEL_NAME = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+
+    window.initWebLLM = async function() {
+      const pBar = document.getElementById('modelProgress');
+      const pInner = document.getElementById('modelProgressBar');
+      const btn = document.getElementById('loadModelBtn');
+      const output = document.getElementById('aiOutputText');
+
+      pBar.style.display = 'block';
+      btn.disabled = true;
+      btn.innerText = '엔진 다운로드 중...';
+      output.innerText = '모델 가중치를 브라우저 로컬 저장소에 다운로드 중입니다. (최초 1회만 필요)';
+
+      try {
+        const { CreateMLCEngine } = await import("https://esm.run/@mlc-ai/web-llm");
+        engine = await CreateMLCEngine(MODEL_NAME, {
+          initProgressCallback: (report) => {
+            const pct = Math.round(report.progress * 100);
+            pInner.style.width = pct + '%';
+            btn.innerText = `로딩 중 (${pct}%)`;
+            output.innerText = report.text;
+          }
+        });
+        btn.innerText = '✅ AI 엔진 준비 완료';
+        btn.style.borderColor = '#10b981';
+        output.innerText = 'AI 엔진이 준비되었습니다. 비행기 모드에서도 동작합니다.';
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.innerText = '엔진 준비 실패 (재시도)';
+        output.innerText = 'WebGPU 초기화 실패: ' + err.message + '\n(갤럭시 크롬 설정에서 WebGPU 활성화 필요)';
+      }
+    };
+
+    window.generateAiReport = async function() {
+      const output = document.getElementById('aiOutputText');
+      if (!calculatedData) {
+        output.innerText = '먼저 엑셀 파일을 업로드해 주십시오.';
+        return;
+      }
+      if (!engine) {
+        output.innerText = '로컬 AI 엔진이 아직 준비되지 않아 [규칙 엔진 기반 진단 리포트]를 표시합니다:\n\n' + ruleReport(calculatedData);
+        return;
+      }
+
+      output.innerText = '온디바이스 AI 리포트 생성 중... (외부 통신 없음)';
+
+      const d = calculatedData;
+      const prompt = `당신은 기업 자금 위험 진단 보조자입니다. 아래 [확정 계산값]만 사용해 대표 보고용 브리핑을 5줄 이내로 작성하십시오.
+규칙: (1) 아래에 없는 숫자·날짜·거래처를 만들지 마십시오. (2) 범위 표기는 물결표 대신 가운뎃점(·)을 쓰십시오. (3) 예측이 아닌 '위험 후보'로 표현하십시오. (4) 조치는 '검토 선택지'로 표현하십시오.
+
+[확정 계산값]
+${ruleReport(d)}
+
+[보고 양식]
+1. 판정 요약
+2. 핵심 위험 (시점과 금액)
+3. 검토 선택지 2가지`;
+
+      try {
+        const reply = await engine.chat.completions.create({
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2
+        });
+        output.innerText = reply.choices[0].message.content;
+      } catch (e) {
+        output.innerText = 'AI 생성 오류: ' + e.message;
+      }
+    };
+  </script>
+</body>
+</html>
