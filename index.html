@@ -7,6 +7,7 @@
   <title>XGIS CASH60 진단 (로컬 온디바이스)</title>
   <!-- build v2.4.3 (2026-09-25): GM v2.4.2 기반, DA 보정 — 판정 규칙 정합, 고정 문구 제거, HOLD 시 이전 결과 초기화, 형식 오류 HOLD, 오프라인 라이브러리 캐시 -->
   <!-- build v2.4.4 (2026-09-25, DA-CL): 판정 배지·색상 동적화, 필수 시트 누락 HOLD, 파일 읽기 오류 HOLD, 파일 재선택 허용, 새 파일 시 AI 브리핑 초기화, 금액 표기 억 단위 통일, 화면 버전 표기 정정 -->
+  <!-- build v2.4.5 (2026-09-25, DA-CL): 판정값 해석 불가 시 HOLD, 고지 문구 중립색 -->
   <!-- AI 작성 초안 → 상담자 검증 필수 -->
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
@@ -59,7 +60,7 @@
   <header>
     <div>
       <h1>XGIS CASH60</h1>
-      <p style="font-size: 0.75rem; color: var(--text-sub);">온디바이스 로컬 진단 · build v2.4.4</p>
+      <p style="font-size: 0.75rem; color: var(--text-sub);">온디바이스 로컬 진단 · build v2.4.5</p>
     </div>
     <span class="badge" id="netStatus">온라인</span>
   </header>
@@ -106,7 +107,7 @@
       </div>
     </div>
 
-    <p style="font-size:0.75rem; color:#fca5a5; margin-top:10px;">합의 전 임계값 기준의 위험 후보이며 예측이 아닙니다.</p>
+    <p style="font-size:0.75rem; color:var(--text-sub); margin-top:10px;">합의 전 임계값 기준의 위험 후보이며 예측이 아닙니다.</p>
 
     <!-- 9개 주차 자금 전망 테이블 -->
     <div class="table-container">
@@ -420,19 +421,24 @@
         in30, out30, r001, r002, runsText, minWeek, dipBalance, flexPays
       };
 
-      // 화면 표시 (v2.4.4: 판정값에 따라 배지·색상 결정)
-      const LEVEL = { 'Critical 후보': 3, 'High 후보': 2, '해당 없음': 1 };
-      const COLOR = { 3: ['#dc2626', '#fff'], 2: ['#d97706', '#fff'], 1: ['#065f46', '#a7f3d0'] };
-      const COLTXT = { 3: '#ef4444', 2: '#f59e0b', 1: '#a7f3d0' };
-      const top = Math.max(LEVEL[r001], LEVEL[r002]);
-      const badge = document.getElementById('evalBadge');
-      badge.innerText = top === 1 ? '해당 없음' : (top === 3 ? 'Critical 후보' : 'High 후보');
-      badge.style.background = COLOR[top][0];
-      badge.style.color = COLOR[top][1];
-      const v1 = document.getElementById('cash60_001_val');
-      const v2 = document.getElementById('cash60_002_val');
-      v1.innerText = r001; v1.style.color = COLTXT[LEVEL[r001]];
-      v2.innerText = r002; v2.style.color = COLTXT[LEVEL[r002]];
+      // 화면 표시 (v2.4.5: 판정값 해석 불가 시 HOLD)
+    const LEVEL = { 'Critical 후보': 3, 'High 후보': 2, '해당 없음': 1 };
+    const COLOR = { 3: ['#dc2626', '#fff'], 2: ['#d97706', '#fff'], 1: ['#065f46', '#a7f3d0'] };
+    const COLTXT = { 3: '#ef4444', 2: '#f59e0b', 1: '#a7f3d0' };
+    const lv = v => LEVEL[String(v).trim()] || 0;
+    const top = Math.max(lv(r001), lv(r002));
+    if (!top) {
+      holdBox('판정값을 해석할 수 없습니다(' + r001 + ' / ' + r002 + '). 규칙 엔진 출력 확인 필요.');
+      return;
+    }
+    const badge = document.getElementById('evalBadge');
+    badge.innerText = top === 1 ? '해당 없음' : (top === 3 ? 'Critical 후보' : 'High 후보');
+    badge.style.background = COLOR[top][0];
+    badge.style.color = COLOR[top][1];
+    const v1 = document.getElementById('cash60_001_val');
+    const v2 = document.getElementById('cash60_002_val');
+    v1.innerText = r001; v1.style.color = COLTXT[lv(r001)] || '';
+    v2.innerText = r002; v2.style.color = COLTXT[lv(r002)] || '';
       document.getElementById('firstDipWeek').innerText = firstDipWeek ? `${firstDipWeek}주차` : '없음';
       document.getElementById('minBalanceVal').innerText = (minBalance / 100000000).toFixed(2) + '억 원';
 
