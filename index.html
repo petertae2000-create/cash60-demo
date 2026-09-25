@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#1a202c">
   <title>XGIS CASH60 진단 (로컬 온디바이스)</title>
   <!-- build v2.4.3 (2026-09-25): GM v2.4.2 기반, DA 보정 — 판정 규칙 정합, 고정 문구 제거, HOLD 시 이전 결과 초기화, 형식 오류 HOLD, 오프라인 라이브러리 캐시 -->
+  <!-- build v2.4.4 (2026-09-25, DA-CL): 판정 배지·색상 동적화, 필수 시트 누락 HOLD, 파일 읽기 오류 HOLD, 파일 재선택 허용, 새 파일 시 AI 브리핑 초기화, 금액 표기 억 단위 통일, 화면 버전 표기 정정 -->
+  <!-- AI 작성 초안 → 상담자 검증 필수 -->
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -57,7 +59,7 @@
   <header>
     <div>
       <h1>XGIS CASH60</h1>
-      <p style="font-size: 0.75rem; color: var(--text-sub);">온디바이스 로컬 진단 v0.1</p>
+      <p style="font-size: 0.75rem; color: var(--text-sub);">온디바이스 로컬 진단 · build v2.4.4</p>
     </div>
     <span class="badge" id="netStatus">온라인</span>
   </header>
@@ -82,17 +84,17 @@
   <div class="card" id="resultCard" style="display:none;">
     <div class="card-title">
       <span>CASH60 규칙 엔진 판정</span>
-      <span id="evalBadge" class="badge" style="background:#dc2626; color:white;">Critical 후보</span>
+      <span id="evalBadge" class="badge">-</span>
     </div>
     
     <div class="grid-2">
       <div class="stat-item">
         <div class="stat-label">CASH60-001 (최소현금)</div>
-        <div class="stat-val text-danger" id="cash60_001_val">-</div>
+        <div class="stat-val" id="cash60_001_val">-</div>
       </div>
       <div class="stat-item">
         <div class="stat-label">CASH60-002 (연속유출)</div>
-        <div class="stat-val text-danger" id="cash60_002_val">-</div>
+        <div class="stat-val" id="cash60_002_val">-</div>
       </div>
       <div class="stat-item">
         <div class="stat-label">최초 하회 주차</div>
@@ -103,6 +105,8 @@
         <div class="stat-val" id="minBalanceVal">-</div>
       </div>
     </div>
+
+    <p style="font-size:0.75rem; color:#fca5a5; margin-top:10px;">합의 전 임계값 기준의 위험 후보이며 예측이 아닙니다.</p>
 
     <!-- 9개 주차 자금 전망 테이블 -->
     <div class="table-container">
@@ -175,13 +179,23 @@
       if (!file) return;
       document.getElementById('fileInfo').innerText = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
 
+      // v2.4.4: 새 파일마다 이전 AI 브리핑 초기화, 같은 파일 재선택 허용
+      document.getElementById('aiOutputText').innerText = '규칙 판정 후 AI 브리핑을 생성할 수 있습니다.';
+
       const reader = new FileReader();
       reader.onload = function(evt) {
-        const data = new Uint8Array(evt.target.result);
-        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-        runCash60Audit(workbook);
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+          runCash60Audit(workbook);
+        } catch (err) {
+          console.error(err);
+          holdBox('파일을 읽을 수 없습니다(' + err.message + '). CASH60 템플릿(.xlsx) 형식인지 확인해 주십시오.');
+        }
       };
+      reader.onerror = () => holdBox('파일 읽기에 실패했습니다. 다시 선택해 주십시오.');
       reader.readAsArrayBuffer(file);
+      e.target.value = '';
     }
 
     function parseSheet(ws) {
@@ -213,7 +227,9 @@
     function holdBox(msg) {
       const qBox = document.getElementById('qualityBox');
       qBox.className = 'status-box status-hold';
-      qBox.innerHTML = '<strong>[데이터 품질: HOLD (보류)]</strong><br>' + msg;
+      qBox.style.display = 'block';
+      qBox.innerHTML = '<strong>[데이터 품질: HOLD (보류)]</strong><br>' + msg + '<br>CASH60-001·002 판정: HOLD (CEO 경보 발송 보류)';
+      document.getElementById('aiOutputText').innerText = '데이터 품질 HOLD 상태에서는 브리핑을 생성하지 않습니다.';
       document.getElementById('resultCard').style.display = 'none';
       document.getElementById('generateAiBtn').style.display = 'none';
       calculatedData = null;
@@ -223,6 +239,14 @@
       const qBox = document.getElementById('qualityBox');
       const rCard = document.getElementById('resultCard');
       qBox.style.display = 'block';
+
+      // v2.4.4: 필수 시트 누락 시 HOLD (누락 시트를 0으로 처리해 '위험 없음'으로 오판하는 것을 방지)
+      const REQUIRED = ['기준정보', '현금잔액', '수금예정', '지급예정'];
+      const missing = REQUIRED.filter(n => !wb.Sheets[n]);
+      if (missing.length) {
+        holdBox('필수 시트가 없습니다: ' + missing.join(', ') + '. 시트 이름을 템플릿과 동일하게 맞춰 주십시오.');
+        return;
+      }
 
       // 1. 기준정보 시트 파싱
       const infoRows = parseSheet(wb.Sheets['기준정보']);
@@ -396,9 +420,19 @@
         in30, out30, r001, r002, runsText, minWeek, dipBalance, flexPays
       };
 
-      // 화면 표시
-      document.getElementById('cash60_001_val').innerText = r001;
-      document.getElementById('cash60_002_val').innerText = r002;
+      // 화면 표시 (v2.4.4: 판정값에 따라 배지·색상 결정)
+      const LEVEL = { 'Critical 후보': 3, 'High 후보': 2, '해당 없음': 1 };
+      const COLOR = { 3: ['#dc2626', '#fff'], 2: ['#d97706', '#fff'], 1: ['#065f46', '#a7f3d0'] };
+      const COLTXT = { 3: '#ef4444', 2: '#f59e0b', 1: '#a7f3d0' };
+      const top = Math.max(LEVEL[r001], LEVEL[r002]);
+      const badge = document.getElementById('evalBadge');
+      badge.innerText = top === 1 ? '해당 없음' : (top === 3 ? 'Critical 후보' : 'High 후보');
+      badge.style.background = COLOR[top][0];
+      badge.style.color = COLOR[top][1];
+      const v1 = document.getElementById('cash60_001_val');
+      const v2 = document.getElementById('cash60_002_val');
+      v1.innerText = r001; v1.style.color = COLTXT[LEVEL[r001]];
+      v2.innerText = r002; v2.style.color = COLTXT[LEVEL[r002]];
       document.getElementById('firstDipWeek').innerText = firstDipWeek ? `${firstDipWeek}주차` : '없음';
       document.getElementById('minBalanceVal').innerText = (minBalance / 100000000).toFixed(2) + '억 원';
 
@@ -408,8 +442,8 @@
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${w.week}주차</td>
-          <td>${(w.inAmt / 10000000).toFixed(0)}천만</td>
-          <td>${(w.outAmt / 10000000).toFixed(0)}천만</td>
+          <td>${(w.inAmt / 100000000).toFixed(2)}억</td>
+          <td>${(w.outAmt / 100000000).toFixed(2)}억</td>
           <td class="${w.dip ? 'text-danger' : ''}">${(w.balance / 100000000).toFixed(2)}억</td>
           <td class="${w.dip ? 'text-danger' : ''}">${w.dip ? '하회' : '-'}</td>
         `;
